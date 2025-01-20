@@ -1,0 +1,29 @@
+[package]
+name = "tf2c-downloader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui = "0.30"
+eframe = { version = "0.30", default-features = false, features = [
+    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+    "default_fonts", # Embed the default egui fonts.
+    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
+    "persistence",   # Enable restoring app state when restarting the app.
+    "wayland",       # To support Linux (and CI)
+] }
+font-kit = "0.14"
+egui_extras = { version = "0.30", features = [
+    "default",
+    "image",
+    "all_loaders",
+] }
+
+image = { version = "0.25", features = [
+    "jpeg",
+    "png",
+] } # Add the types you want support for
+egui-phosphor = "0.8"
+egui_taffy = "0.6"
+
+rfd = "0.15"
