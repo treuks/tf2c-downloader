@@ -24,6 +24,9 @@ image = { version = "0.25", features = [
     "png",
 ] } # Add the types you want support for
 egui-phosphor = "0.8"
-egui_taffy = "0.6"
 
 rfd = "0.15"
+
+reqwest = "0.12"
+dirs = "6"
+poll-promise = "0.3"
