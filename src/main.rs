@@ -8,6 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use egui::RichText;
+use poll_promise::Promise;
+use serde_json::Value;
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([820.0, 480.0]),
@@ -48,12 +52,6 @@ impl fmt::Display for ErrLabel {
     }
 }
 
-struct MyApp {
-    steam_folder_location: Option<PathBuf>,
-    location_err: Option<ErrLabel>,
-    game_data: Option<GameData>,
-}
-
 fn parse_version_file(version_file: &str) -> HashMap<String, String> {
     let mut kv: HashMap<String, String> = HashMap::new();
     for line in version_file.lines() {
@@ -67,6 +65,8 @@ fn sus_to_version(map: &HashMap<String, String>) -> Option<Version> {
     let name = map.get("VersionName")?;
     let time = map.get("VersionTime")?;
 
+    // name.retain(|char| !".".contains(char));
+
     Some(Version {
         version_name: name.to_owned(),
         version_time: time.to_owned(),
@@ -78,15 +78,34 @@ struct Version {
     version_name: String,
 }
 
-fn get_game_data(steam_folder_location: &PathBuf) -> Result<GameData, PopulateError> {
-    let mut location = steam_folder_location.clone();
+fn get_versions_json() -> Result<String, reqwest::Error> {
+    let response =
+        reqwest::blocking::get("https://wiki.tf2classic.com/kachemak/versions.json")?.text()?;
+
+    Ok(response)
+}
+
+fn parse_versions(response_val: &serde_json::Value) -> Result<Vec<String>, serde_json::Error> {
+    let mut versions = response_val["versions"]
+        .as_object()
+        .expect("no versions object in versions lol")
+        .keys()
+        .cloned()
+        .collect::<Vec<String>>();
+    versions.sort();
+
+    Ok(versions)
+}
+
+fn get_game_data(steam_folder_location: &Path) -> Result<GameData, PopulateError> {
+    let mut location = steam_folder_location.to_path_buf();
     location.push("steamapps/sourcemods/tf2classic");
 
     match location.try_exists() {
         Ok(true) => {
             let game_version = std::fs::read_to_string(Path::join(&location, "version.txt"));
             match game_version {
-                Err(_) => return Err(PopulateError::NoVersionFile),
+                Err(_) => Err(PopulateError::NoVersionFile),
                 Ok(version) => {
                     let version_file = parse_version_file(&version);
                     let Some(version) = sus_to_version(&version_file) else {
@@ -120,19 +139,24 @@ struct GameData {
     version: Version,
 }
 
+struct MyApp {
+    steam_folder_location: Option<PathBuf>,
+    location_err: Option<ErrLabel>,
+    game_data: Option<GameData>,
+    version_promise: Promise<Result<String, reqwest::Error>>,
+}
+
 impl Default for MyApp {
     fn default() -> Self {
-        // Self {
-        //     steam_folder_location: get_default_steam_location(),
-        //     game_data: None,
-        //     location_err: None,
-        // }
         let default_steam_location = get_default_steam_location();
+        let version_promise = Promise::spawn_thread("httpversion_thread", get_versions_json);
+
         match default_steam_location {
             None => Self {
                 steam_folder_location: None,
                 game_data: None,
                 location_err: None,
+                version_promise,
             },
             Some(location) => {
                 let game_data = get_game_data(&location);
@@ -141,21 +165,19 @@ impl Default for MyApp {
                         steam_folder_location: Some(location),
                         game_data: Some(gd),
                         location_err: None,
+                        version_promise,
                     },
                     Err(er) => Self {
                         steam_folder_location: Some(location),
                         game_data: None,
                         location_err: Some(ErrLabel::PopulateErr(er)),
+                        version_promise,
                     },
                 }
             }
         }
     }
 }
-
-// fn big_button(text: &str) -> Button {
-//     Button::new(RichText::new(text).size(14.0))
-// }
 
 fn get_default_steam_location() -> Option<PathBuf> {
     // TODO: use the windows registry to find a path instead/alongside of this
@@ -241,7 +263,7 @@ impl eframe::App for MyApp {
                         ));
                         if ui
                             .button(format!(
-                                "{}  Select a different location..",
+                                "{} Select a different location..",
                                 egui_phosphor::regular::ARROW_ARC_LEFT
                             ))
                             .clicked()
@@ -250,18 +272,29 @@ impl eframe::App for MyApp {
                         }
                         match &self.game_data {
                             Some(gd) => {
-                                ui.add_space(8.0);
-                                ui.label(format!(
-                                    "Installed TF2C version: {}",
+                                ui.add_space(6.0);
+                                ui.label(RichText::new(format!(
+                                    "{} Installed game version: v{}",
+                                    egui_phosphor::regular::HARD_DRIVES,
                                     gd.version.version_name
-                                ));
+                                )).size(15.0));
+
+                                if let Some(result) = &self.version_promise.ready() {
+                                    let res = serde_json::from_str(result.as_ref().unwrap());
+                                    let vers = parse_versions(&res.unwrap()).unwrap();
+
+                                    ui.label(RichText::new(format!("{} Latest version: {}", egui_phosphor::regular::FILE_CLOUD, vers[vers.len() - 1])).size(15.0));
+                                } else {
+                                    ui.label("Loading...");
+                                }
+
                             }
                             None => match &self.location_err {
                                 None => {
                                     ui.label("XDD there's no game data and no error so something is really wrong");
                                 }
                                 Some(err) => {
-                                    ui.label(format!("Error: {}", err.to_string()));
+                                    ui.label(format!("Error: {}", err));
                                 }
                             },
                         }
